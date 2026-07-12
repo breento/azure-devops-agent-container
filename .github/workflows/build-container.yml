@@ -56,8 +56,7 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=sha,format=short,prefix=sha-
+            type=raw,value={{date 'YYYY.MM.DD'}}.${{ github.run_number }},enable={{is_default_branch}}
 
       - name: Build and optionally push container image
         id: build
