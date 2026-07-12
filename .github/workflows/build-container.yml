@@ -20,8 +20,6 @@ on:
 permissions:
   contents: read
   packages: write
-  attestations: write
-  id-token: write
 
 env:
   POWERSHELL_VERSION: 7.6.3
@@ -36,8 +34,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -80,13 +76,5 @@ jobs:
             IMAGE_SOURCE=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          sbom: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          provenance: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-
-      - name: Attest build provenance
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
+          sbom: false
+          provenance: false
