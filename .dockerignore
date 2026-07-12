@@ -1,0 +1,14 @@
+.git
+.github
+.vscode
+*.md
+LICENSE
+*.tmp
+*.log
+test-results/
+coverage/
+.terraform/
+*.tfstate
+*.tfstate.*
+.env
+.env.*

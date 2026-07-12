@@ -1,0 +1,88 @@
+name: Build container image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - scripts/**
+      - .github/workflows/build-container.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - scripts/**
+      - .github/workflows/build-container.yml
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 1 * *'
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
+env:
+  TERRAFORM_VERSION: 1.12.2
+  PACKER_VERSION: 1.14.1
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/azure-devops-agent
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract container metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=sha,format=short,prefix=sha-
+
+      - name: Build and optionally push container image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            TERRAFORM_VERSION=${{ env.TERRAFORM_VERSION }}
+            PACKER_VERSION=${{ env.PACKER_VERSION }}
+            IMAGE_SOURCE=https://github.com/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          provenance: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
