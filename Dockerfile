@@ -1,7 +1,10 @@
-FROM mcr.microsoft.com/powershell:7.5-ubuntu-24.04
+FROM ubuntu:24.04
 
-ARG TERRAFORM_VERSION=1.12.2
-ARG PACKER_VERSION=1.14.1
+ARG POWERSHELL_VERSION=7.6.3
+
+ARG POWERSHELL_SHA256
+ARG TERRAFORM_VERSION=1.15.8
+ARG PACKER_VERSION=1.15.4
 ARG IMAGE_SOURCE=https://github.com
 
 LABEL org.opencontainers.image.title="Azure DevOps ephemeral agent" \
@@ -20,6 +23,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
+        apt-transport-https \
         ca-certificates \
         curl \
         git \
@@ -31,14 +35,34 @@ RUN set -eux; \
         tar \
         unzip \
         zip; \
+    test -n "$POWERSHELL_SHA256"; \
+    powershell_package="powershell_${POWERSHELL_VERSION}-1.deb_amd64.deb"; \
+    curl --fail --silent --show-error --location \
+        --output "/tmp/${powershell_package}" \
+        "https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/${powershell_package}"; \
+    echo "${POWERSHELL_SHA256}  /tmp/${powershell_package}" | sha256sum --check --strict -; \
+    apt-get install -y --no-install-recommends "/tmp/${powershell_package}"; \
+    pwsh --version; \
+    EXPECTED_POWERSHELL_VERSION="$POWERSHELL_VERSION" pwsh -NoLogo -NoProfile -Command \
+        'if ($PSVersionTable.PSVersion.ToString() -ne $env:EXPECTED_POWERSHELL_VERSION) { throw "Unexpected PowerShell version" }'; \
+    rm -f "/tmp/${powershell_package}"; \
     install -d -m 0755 /etc/apt/keyrings; \
-    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft-prod.gpg; \
-    chmod a+r /etc/apt/keyrings/microsoft-prod.gpg; \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" > /etc/apt/sources.list.d/azure-cli.list; \
+    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg; \
+    chmod a+r /etc/apt/keyrings/microsoft.gpg; \
+    AZ_DIST="$(lsb_release -cs)"; \
+    AZ_ARCH="$(dpkg --print-architecture)"; \
+    printf '%s\n' \
+        'Types: deb' \
+        'URIs: https://packages.microsoft.com/repos/azure-cli/' \
+        "Suites: ${AZ_DIST}" \
+        'Components: main' \
+        "Architectures: ${AZ_ARCH}" \
+        'Signed-by: /etc/apt/keyrings/microsoft.gpg' \
+        > /etc/apt/sources.list.d/azure-cli.sources; \
     apt-get update; \
     apt-get install -y --no-install-recommends azure-cli; \
-    az extension add --name azure-devops; \
-    az extension add --name containerapp; \
+    az version; \
+    az extension add --name azure-devops --yes; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -46,14 +70,17 @@ RUN set -eux; \
         case "$tool" in \
             terraform) version="$TERRAFORM_VERSION" ;; \
             packer) version="$PACKER_VERSION" ;; \
-        esac; \
+    esac; \
         archive="${tool}_${version}_linux_amd64.zip"; \
+        checksums="${tool}_${version}_SHA256SUMS"; \
         base_url="https://releases.hashicorp.com/${tool}/${version}"; \
+        temp_dir="$(mktemp -d)"; \
         curl -fsSLO "${base_url}/${archive}"; \
-        curl -fsSLO "${base_url}/${tool}_${version}_SHA256SUMS"; \
-        grep " ${archive}$" "${tool}_${version}_SHA256SUMS" | sha256sum -c -; \
-        unzip -q "$archive" -d /usr/local/bin; \
-        rm -f "$archive" "${tool}_${version}_SHA256SUMS"; \
+        curl -fsSLO "${base_url}/${checksums}"; \
+        grep " ${archive}$" "$checksums" | sha256sum -c -; \
+        unzip -q "$archive" -d "$temp_dir"; \
+        install -m 0755 "${temp_dir}/${tool}" "/usr/local/bin/${tool}"; \
+        rm -rf "$temp_dir" "$archive" "$checksums"; \
     done; \
     terraform version; \
     packer version

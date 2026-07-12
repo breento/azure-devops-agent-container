@@ -24,8 +24,10 @@ permissions:
   id-token: write
 
 env:
-  TERRAFORM_VERSION: 1.12.2
-  PACKER_VERSION: 1.14.1
+  POWERSHELL_VERSION: 7.6.3
+  POWERSHELL_SHA256: F03200F25C511583C648AECB8D8CE75789DB2CF668B39803EE639476D716A3DD
+  TERRAFORM_VERSION: 1.15.8
+  PACKER_VERSION: 1.15.4
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/azure-devops-agent
 
 jobs:
@@ -71,6 +73,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
+            POWERSHELL_VERSION=${{ env.POWERSHELL_VERSION }}
+            POWERSHELL_SHA256=${{ env.POWERSHELL_SHA256 }}
             TERRAFORM_VERSION=${{ env.TERRAFORM_VERSION }}
             PACKER_VERSION=${{ env.PACKER_VERSION }}
             IMAGE_SOURCE=https://github.com/${{ github.repository }}

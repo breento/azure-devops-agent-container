@@ -6,7 +6,7 @@ This image runs a temporary self-hosted Azure DevOps agent in an Azure Container
 
 ## Included tools
 
-- PowerShell 7
+- Ubuntu 24.04 base image with pinned PowerShell 7.6.3 installed during the image build and validated with its SHA256 checksum
 - Azure CLI with the `azure-devops` and `containerapp` extensions
 - Terraform and Packer
 - Git, curl, jq, unzip, zip, OpenSSH client, rsync, and CA certificates
@@ -38,10 +38,14 @@ For Azure access in pipeline jobs, use Azure DevOps service connections with wor
 
 ```bash
 docker build \
+  --build-arg POWERSHELL_VERSION=7.6.3 \
+  --build-arg POWERSHELL_SHA256=F03200F25C511583C648AECB8D8CE75789DB2CF668B39803EE639476D716A3DD \
   --build-arg TERRAFORM_VERSION=<version> \
   --build-arg PACKER_VERSION=<version> \
   -t azure-devops-agent:local .
 ```
+
+PowerShell updates are controlled through the workflow and Docker build arguments.
 
 ## Local verification
 
