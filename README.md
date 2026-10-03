@@ -17,7 +17,7 @@ PowerShell, Terraform, and Packer versions are pinned in the Dockerfile and buil
 
 ## Image location and tags
 
-GitHub Actions publishes to `ghcr.io/<owner>/azure-devops-agent`. Main branch builds publish `latest`, a date/run-number tag, and a commit-based `sha-<commit>` convenience tag. The SHA tag can be republished by the monthly rebuild, so it does not guarantee an immutable image. Builds also publish an SBOM and BuildKit provenance attestations. Pull requests build without pushing. A monthly scheduled build refreshes Ubuntu security updates and upstream packages.
+GitHub Actions publishes to `ghcr.io/<owner>/azure-devops-agent`. Main branch builds publish `latest`, a date/run-number tag, and a commit-based `sha-<commit>` convenience tag. The SHA tag can be republished by the monthly rebuild, so it does not guarantee an immutable image. Pull requests build without pushing. A monthly scheduled build refreshes Ubuntu security updates and upstream packages.
 
 For Azure Container Apps deployments, pin the image by digest for true immutability. The `sha-<commit>` tag is useful for identifying source but can move when that commit is rebuilt. Use `latest` for convenience in development only.
 

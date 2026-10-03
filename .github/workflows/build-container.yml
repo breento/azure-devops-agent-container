@@ -76,5 +76,5 @@ jobs:
             IMAGE_SOURCE=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          sbom: true
-          provenance: mode=max
+          sbom: false
+          provenance: false
