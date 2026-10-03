@@ -4,7 +4,7 @@ ARG TARGETARCH
 ARG TARGETPLATFORM
 ARG POWERSHELL_VERSION=7.6.6
 ARG POWERSHELL_SHA256_AMD64=9585F38AB5A026C3FC0995486E26E12050777960FEF47A22DCA98B577C5D27A7
-ARG POWERSHELL_SHA256_ARM64=56AA313D5474602233E97A57104B661DAF4A8C35FC91F1EB664938BCCE8E11DA
+ARG POWERSHELL_TARBALL_SHA256_ARM64=924829e54c983648f6f1419a2dc7f9433c861b2fb5bd57736ff096c24f133729
 ARG TERRAFORM_VERSION=1.16.5
 ARG PACKER_VERSION=1.16.1
 ARG AZP_AGENT_VERSION=5.279.0
@@ -27,8 +27,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN set -eux; \
     case "$TARGETARCH" in \
-        amd64) deb_arch=amd64; powershell_sha256="$POWERSHELL_SHA256_AMD64" ;; \
-        arm64) deb_arch=arm64; powershell_sha256="$POWERSHELL_SHA256_ARM64" ;; \
+        amd64) deb_arch=amd64 ;; \
+        arm64) deb_arch=arm64 ;; \
         *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     case "$TARGETPLATFORM" in linux/amd64|linux/arm64) ;; *) echo "Unsupported TARGETPLATFORM: $TARGETPLATFORM" >&2; exit 1 ;; esac; \
@@ -49,16 +49,30 @@ RUN set -eux; \
         unzip \
         util-linux \
         zip; \
-    powershell_package="powershell_${POWERSHELL_VERSION}-1.deb_${deb_arch}.deb"; \
-    curl --fail --silent --show-error --location \
-        --output "/tmp/${powershell_package}" \
-        "https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/${powershell_package}"; \
-    echo "${powershell_sha256}  /tmp/${powershell_package}" | sha256sum --check --strict -; \
-    apt-get install -y --no-install-recommends "/tmp/${powershell_package}"; \
+    if [[ "$TARGETARCH" == amd64 ]]; then \
+        powershell_package="powershell_${POWERSHELL_VERSION}-1.deb_amd64.deb"; \
+        curl --fail --silent --show-error --location \
+            --output "/tmp/${powershell_package}" \
+            "https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/${powershell_package}"; \
+        echo "${POWERSHELL_SHA256_AMD64}  /tmp/${powershell_package}" | sha256sum --check --strict -; \
+        apt-get install -y --no-install-recommends "/tmp/${powershell_package}"; \
+        rm -f "/tmp/${powershell_package}"; \
+    else \
+        apt-get install -y --no-install-recommends libicu74; \
+        powershell_archive="powershell-${POWERSHELL_VERSION}-linux-arm64.tar.gz"; \
+        curl --fail --silent --show-error --location \
+            --output "/tmp/${powershell_archive}" \
+            "https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/${powershell_archive}"; \
+        echo "${POWERSHELL_TARBALL_SHA256_ARM64}  /tmp/${powershell_archive}" | sha256sum --check --strict -; \
+        install -d -m 0755 /opt/microsoft/powershell/7; \
+        tar -xzf "/tmp/${powershell_archive}" -C /opt/microsoft/powershell/7; \
+        chmod +x /opt/microsoft/powershell/7/pwsh; \
+        ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh; \
+        rm -f "/tmp/${powershell_archive}"; \
+    fi; \
     pwsh --version; \
     EXPECTED_POWERSHELL_VERSION="$POWERSHELL_VERSION" pwsh -NoLogo -NoProfile -Command \
         'if ($PSVersionTable.PSVersion.ToString() -ne $env:EXPECTED_POWERSHELL_VERSION) { throw "Unexpected PowerShell version" }'; \
-    rm -f "/tmp/${powershell_package}"; \
     install -d -m 0755 /etc/apt/keyrings; \
     curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg; \
     chmod a+r /etc/apt/keyrings/microsoft.gpg; \

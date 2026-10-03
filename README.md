@@ -8,7 +8,7 @@ This multi-architecture Linux image runs a temporary Azure DevOps self-hosted ag
 
 - Ubuntu 24.04
 - Azure Pipelines agent 5.279.0, installed at image build time
-- PowerShell 7.6.6, installed with SHA256 verification
+- PowerShell 7.6.6, installed with architecture-specific SHA256 verification (amd64 `.deb`; arm64 release tarball with Ubuntu 24.04 `libicu74`)
 - Azure CLI with the `azure-devops` and `containerapp` extensions
 - Terraform 1.16.5 and Packer 1.16.1
 - Git, curl, jq, unzip, zip, OpenSSH client, rsync, and CA certificates
@@ -74,7 +74,7 @@ docker build \
   -t azure-devops-agent:local .
 ```
 
-PowerShell package SHA256 values are pinned separately for amd64 and arm64 in the Dockerfile. Build both variants with Buildx using `--platform linux/amd64,linux/arm64`.
+PowerShell package SHA256 values are pinned separately for amd64 and arm64 in the Dockerfile: amd64 uses the official `.deb` checksum, and arm64 uses the official Linux ARM64 release tarball checksum. The arm64 tarball is installed under `/opt/microsoft/powershell/7` with `libicu74` from Ubuntu 24.04. Build both variants with Buildx using `--platform linux/amd64,linux/arm64`.
 
 Run tool validation without registering an agent:
 
