@@ -1,10 +1,10 @@
 FROM ubuntu:24.04
 
-ARG POWERSHELL_VERSION=7.6.3
+ARG POWERSHELL_VERSION=7.6.6
 
 ARG POWERSHELL_SHA256
-ARG TERRAFORM_VERSION=1.15.8
-ARG PACKER_VERSION=1.15.4
+ARG TERRAFORM_VERSION=1.16.5
+ARG PACKER_VERSION=1.16.1
 ARG IMAGE_SOURCE=https://github.com
 
 LABEL org.opencontainers.image.title="Azure DevOps ephemeral agent" \
@@ -31,9 +31,11 @@ RUN set -eux; \
         jq \
         lsb-release \
         openssh-client \
+        procps \
         rsync \
         tar \
         unzip \
+        util-linux \
         zip; \
     test -n "$POWERSHELL_SHA256"; \
     powershell_package="powershell_${POWERSHELL_VERSION}-1.deb_amd64.deb"; \
@@ -63,6 +65,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends azure-cli; \
     az version; \
     az extension add --name azure-devops --yes; \
+    az extension add --name containerapp --yes --allow-preview true; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \

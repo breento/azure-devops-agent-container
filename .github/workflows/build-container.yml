@@ -22,10 +22,10 @@ permissions:
   packages: write
 
 env:
-  POWERSHELL_VERSION: 7.6.3
-  POWERSHELL_SHA256: F03200F25C511583C648AECB8D8CE75789DB2CF668B39803EE639476D716A3DD
-  TERRAFORM_VERSION: 1.15.8
-  PACKER_VERSION: 1.15.4
+  POWERSHELL_VERSION: 7.6.6
+  POWERSHELL_SHA256: 9585F38AB5A026C3FC0995486E26E12050777960FEF47A22DCA98B577C5D27A7
+  TERRAFORM_VERSION: 1.16.5
+  PACKER_VERSION: 1.16.1
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/azure-devops-agent
 
 jobs:
@@ -57,6 +57,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value={{date 'YYYY.MM.DD'}}.${{ github.run_number }},enable={{is_default_branch}}
+            type=sha,prefix=sha-,enable={{is_default_branch}}
 
       - name: Build and optionally push container image
         id: build
@@ -75,5 +76,5 @@ jobs:
             IMAGE_SOURCE=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          sbom: false
-          provenance: false
+          sbom: true
+          provenance: mode=max

@@ -19,7 +19,11 @@ foreach ($command in $requiredCommands) {
 }
 
 foreach ($extension in @('azure-devops', 'containerapp')) {
-    az extension show --name $extension --only-show-errors | Out-Null
+    $extensionInfo = az extension show --name $extension --only-show-errors | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or -not $extensionInfo.version) {
+        throw "Azure CLI extension '$extension' is not installed correctly."
+    }
+    Write-Host "Azure CLI extension: $extension $($extensionInfo.version)"
 }
 
 $installedModules = @{}
