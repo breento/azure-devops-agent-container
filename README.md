@@ -2,24 +2,32 @@
 
 ## Purpose
 
-This Linux AMD64 image runs a temporary Azure DevOps self-hosted agent in an Azure Container Apps Job. Each container execution downloads and registers the current Linux x64 agent, accepts one pipeline job with `run.sh --once`, removes its registration, and exits. The startup flow follows Microsoft's documented [Docker agent pattern](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/docker?view=azure-devops).
+This multi-architecture Linux image runs a temporary Azure DevOps self-hosted agent in an Azure Container Apps Job. It supports `linux/amd64` and `linux/arm64`; GHCR publishes both platforms in one image manifest, and Docker selects the matching architecture automatically. The startup flow follows Microsoft's documented [Docker agent pattern](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/docker?view=azure-devops).
 
 ## Included tools
 
 - Ubuntu 24.04
+- Azure Pipelines agent 5.279.0, installed at image build time
 - PowerShell 7.6.6, installed with SHA256 verification
 - Azure CLI with the `azure-devops` and `containerapp` extensions
 - Terraform 1.16.5 and Packer 1.16.1
 - Git, curl, jq, unzip, zip, OpenSSH client, rsync, and CA certificates
 - PowerShell modules: `Az.Accounts`, `Az.Resources`, `Az.Storage`, `Az.Compute`, `Az.Network`, `Az.ManagedServiceIdentity`, and `Az.DesktopVirtualization`
 
-PowerShell, Terraform, and Packer versions are pinned in the Dockerfile and build workflow. Azure CLI comes from Microsoft's Ubuntu repository; the two CLI extensions are installed explicitly during the image build, including preview support for `containerapp`. Tool verification runs during image build.
+PowerShell, Terraform, Packer, and Azure Pipelines agent versions are pinned in the Dockerfile and build workflow. The agent is installed during image build at version **5.279.0**, using Microsoft's architecture-specific packages. This makes startup faster and deterministic because the agent is no longer downloaded at container startup. Updating the agent requires changing the explicit `AZP_AGENT_VERSION` pin and rebuilding/publishing the image. Monthly rebuilds refresh the OS and upstream packages without silently changing this pin. Azure CLI comes from Microsoft's Ubuntu repository; the `azure-devops` and `containerapp` extensions are installed explicitly, including preview support for `containerapp`. Tool verification runs during image build on both architectures.
 
 ## Image location and tags
 
-GitHub Actions publishes to `ghcr.io/<owner>/azure-devops-agent`. Main branch builds publish `latest`, a date/run-number tag, and a commit-based `sha-<commit>` convenience tag. The SHA tag can be republished by the monthly rebuild, so it does not guarantee an immutable image. Pull requests build without pushing. A monthly scheduled build refreshes Ubuntu security updates and upstream packages.
+GitHub Actions publishes a single multi-platform image index at `ghcr.io/<owner>/azure-devops-agent`. Main branch builds publish `latest`, a date/run-number tag, and a commit-based `sha-<commit>` convenience tag. Each tag resolves to both `linux/amd64` and `linux/arm64`, and Docker chooses the matching platform. The SHA tag can be republished by the monthly rebuild, so it does not guarantee an immutable image. Pull requests build both architectures without pushing. A monthly scheduled build refreshes Ubuntu security updates and upstream packages.
 
 For Azure Container Apps deployments, pin the image by digest for true immutability. The `sha-<commit>` tag is useful for identifying source but can move when that commit is rebuilt. Use `latest` for convenience in development only.
+
+Pull the published image and inspect its platform manifests:
+
+```bash
+docker pull ghcr.io/breento/azure-devops-agent:latest
+docker buildx imagetools inspect ghcr.io/breento/azure-devops-agent:latest
+```
 
 ## Authentication
 
@@ -60,11 +68,13 @@ For local-only PAT fallback testing, provide `AZP_TOKEN` instead of the service 
 ```bash
 docker build \
   --build-arg POWERSHELL_VERSION=7.6.6 \
-  --build-arg POWERSHELL_SHA256=9585F38AB5A026C3FC0995486E26E12050777960FEF47A22DCA98B577C5D27A7 \
   --build-arg TERRAFORM_VERSION=1.16.5 \
   --build-arg PACKER_VERSION=1.16.1 \
+  --build-arg AZP_AGENT_VERSION=5.279.0 \
   -t azure-devops-agent:local .
 ```
+
+PowerShell package SHA256 values are pinned separately for amd64 and arm64 in the Dockerfile. Build both variants with Buildx using `--platform linux/amd64,linux/arm64`.
 
 Run tool validation without registering an agent:
 
@@ -77,15 +87,15 @@ docker run --rm \
 
 ## One-job lifecycle
 
-1. The container starts and gets an Azure DevOps registration token.
-2. The current agent package is downloaded and registered under a unique name.
+1. The container starts and gets an Azure DevOps registration token. The pinned agent package is already installed in the image, so startup does not download it.
+2. The preinstalled agent is registered under a unique name.
 3. `run.sh --once` accepts exactly one pipeline job, then exits.
 4. The registration is removed, including when the container receives `SIGTERM` or `SIGINT`.
 5. The container exits with the agent process status; startup and job failures return non-zero.
 
 ## Limitations
 
-- Linux AMD64 only.
+- Linux amd64 and arm64 are supported. PowerShell, Terraform, and Packer are installed for both architectures.
 - No Docker daemon is included. Pipelines that need local Docker require another agent setup.
 - Only the preinstalled tools and modules are guaranteed to be available.
 

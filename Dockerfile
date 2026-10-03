@@ -1,26 +1,38 @@
 FROM ubuntu:24.04
 
+ARG TARGETARCH
+ARG TARGETPLATFORM
 ARG POWERSHELL_VERSION=7.6.6
-
-ARG POWERSHELL_SHA256
+ARG POWERSHELL_SHA256_AMD64=9585F38AB5A026C3FC0995486E26E12050777960FEF47A22DCA98B577C5D27A7
+ARG POWERSHELL_SHA256_ARM64=56AA313D5474602233E97A57104B661DAF4A8C35FC91F1EB664938BCCE8E11DA
 ARG TERRAFORM_VERSION=1.16.5
 ARG PACKER_VERSION=1.16.1
+ARG AZP_AGENT_VERSION=5.279.0
 ARG IMAGE_SOURCE=https://github.com
 
 LABEL org.opencontainers.image.title="Azure DevOps ephemeral agent" \
-      org.opencontainers.image.description="Linux AMD64 Azure DevOps agent image for Azure Container Apps Jobs" \
+      org.opencontainers.image.description="Multi-architecture Azure DevOps agent image for Azure Container Apps Jobs" \
       org.opencontainers.image.source="${IMAGE_SOURCE}" \
       org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV AGENT_ALLOW_RUNASROOT=1
 ENV AZP_WORK=/azp/_work
+ENV AZP_AGENT_VERSION=${AZP_AGENT_VERSION}
+ENV TARGETARCH=${TARGETARCH}
 ENV POWERSHELL_TELEMETRY_OPTOUT=1
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN set -eux; \
+    case "$TARGETARCH" in \
+        amd64) deb_arch=amd64; powershell_sha256="$POWERSHELL_SHA256_AMD64" ;; \
+        arm64) deb_arch=arm64; powershell_sha256="$POWERSHELL_SHA256_ARM64" ;; \
+        *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    case "$TARGETPLATFORM" in linux/amd64|linux/arm64) ;; *) echo "Unsupported TARGETPLATFORM: $TARGETPLATFORM" >&2; exit 1 ;; esac; \
+    test "$(dpkg --print-architecture)" = "$deb_arch"; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         apt-transport-https \
@@ -37,12 +49,11 @@ RUN set -eux; \
         unzip \
         util-linux \
         zip; \
-    test -n "$POWERSHELL_SHA256"; \
-    powershell_package="powershell_${POWERSHELL_VERSION}-1.deb_amd64.deb"; \
+    powershell_package="powershell_${POWERSHELL_VERSION}-1.deb_${deb_arch}.deb"; \
     curl --fail --silent --show-error --location \
         --output "/tmp/${powershell_package}" \
         "https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/${powershell_package}"; \
-    echo "${POWERSHELL_SHA256}  /tmp/${powershell_package}" | sha256sum --check --strict -; \
+    echo "${powershell_sha256}  /tmp/${powershell_package}" | sha256sum --check --strict -; \
     apt-get install -y --no-install-recommends "/tmp/${powershell_package}"; \
     pwsh --version; \
     EXPECTED_POWERSHELL_VERSION="$POWERSHELL_VERSION" pwsh -NoLogo -NoProfile -Command \
@@ -74,7 +85,8 @@ RUN set -eux; \
             terraform) version="$TERRAFORM_VERSION" ;; \
             packer) version="$PACKER_VERSION" ;; \
     esac; \
-        archive="${tool}_${version}_linux_amd64.zip"; \
+        case "$TARGETARCH" in amd64) hashicorp_arch=amd64 ;; arm64) hashicorp_arch=arm64 ;; esac; \
+        archive="${tool}_${version}_linux_${hashicorp_arch}.zip"; \
         checksums="${tool}_${version}_SHA256SUMS"; \
         base_url="https://releases.hashicorp.com/${tool}/${version}"; \
         temp_dir="$(mktemp -d)"; \
@@ -87,6 +99,25 @@ RUN set -eux; \
     done; \
     terraform version; \
     packer version
+
+RUN set -eux; \
+    case "$TARGETARCH" in \
+        amd64) agent_arch=x64; agent_sha256=6e3352e1dc44c924cd85840df279f21c200e6365596a7c38f3087015262555dc ;; \
+        arm64) agent_arch=arm64; agent_sha256=d97cb1286de41c97347a5da4f663daed70f65f9cdd4322f50f8cc7b4e2df9dd4 ;; \
+        *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    agent_archive="vsts-agent-linux-${agent_arch}-${AZP_AGENT_VERSION}.tar.gz"; \
+    curl --fail --silent --show-error --location \
+        --output "/tmp/${agent_archive}" \
+        "https://download.agent.dev.azure.com/agent/${AZP_AGENT_VERSION}/${agent_archive}"; \
+    echo "${agent_sha256}  /tmp/${agent_archive}" | sha256sum --check --strict -; \
+    install -d -m 0755 /azp/agent; \
+    tar -xzf "/tmp/${agent_archive}" -C /azp/agent; \
+    rm -f "/tmp/${agent_archive}"; \
+    /azp/agent/bin/installdependencies.sh; \
+    chmod +x /azp/agent/config.sh /azp/agent/run.sh; \
+    installed_agent_version="$(/azp/agent/bin/Agent.Listener --version)"; \
+    test "$installed_agent_version" = "$AZP_AGENT_VERSION"
 
 RUN set -eux; \
     pwsh -NoLogo -NoProfile -Command \

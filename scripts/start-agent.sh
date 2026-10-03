@@ -3,7 +3,6 @@ set -Eeuo pipefail
 
 readonly agent_root="/azp/agent"
 agent_configured=false
-agent_archive=""
 agent_pid=""
 agent_pgid=""
 auth_mode=""
@@ -103,7 +102,6 @@ cleanup() {
         done
     fi
 
-    rm -f "${agent_archive:-}"
     unset registration_token AZP_CLIENTSECRET
     if [[ "$status" -eq 0 && "$cleanup_failed" == true ]]; then
         status=1
@@ -174,41 +172,12 @@ export VSO_AGENT_IGNORE="AZP_TOKEN,AZP_CLIENTSECRET"
 acquire_registration_token
 unset AZP_TOKEN
 
+if [[ ! -x "$agent_root/config.sh" || ! -x "$agent_root/run.sh" ]]; then
+    printf 'Preinstalled Azure DevOps agent is missing from %s.\n' "$agent_root" >&2
+    exit 1
+fi
 mkdir -p "$AZP_WORK"
-rm -rf "$agent_root"
-mkdir -p "$agent_root"
-
-printf 'Retrieving the latest Azure DevOps Linux x64 agent package.\n'
-package_response="$(curl --fail --silent --show-error \
-    --user ":$registration_token" \
-    --header 'Accept: application/json' \
-    "${AZP_URL}/_apis/distributedtask/packages/agent?platform=linux-x64&top=1")"
-
-if ! jq -e . >/dev/null 2>&1 <<<"$package_response"; then
-    printf 'Azure DevOps agent package API returned invalid JSON.\n' >&2
-    exit 1
-fi
-
-download_url="$(jq -er 'if type == "array" then .[0].downloadUrl else .value[0].downloadUrl end' <<<"$package_response")" || {
-    printf 'Azure DevOps agent package API did not return a downloadUrl.\n' >&2
-    exit 1
-}
-
-if [[ -z "$download_url" ]]; then
-    printf 'Azure DevOps agent package API returned an empty downloadUrl.\n' >&2
-    exit 1
-fi
-
-agent_archive="$(mktemp /tmp/azure-pipelines-agent.XXXXXX.tar.gz)"
-printf 'Downloading Azure DevOps agent package.\n'
-curl --fail --silent --show-error --location --output "$agent_archive" "$download_url"
-
-if ! tar -xzf "$agent_archive" -C "$agent_root"; then
-    printf 'Unable to unpack the Azure DevOps agent archive.\n' >&2
-    exit 1
-fi
-rm -f "$agent_archive"
-agent_archive=""
+printf 'Using preinstalled Azure DevOps agent version %s.\n' "${AZP_AGENT_VERSION:-unknown}"
 
 cd "$agent_root"
 agent_configured=true
