@@ -35,11 +35,13 @@ There are two separate authentication concerns.
 
 ### Azure DevOps agent registration and runtime
 
-Production uses a dedicated Entra service principal for agent registration. This implementation follows Microsoft's [Docker-agent pattern](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/docker?view=azure-devops): it logs in to Azure CLI with the service principal, acquires an Azure DevOps access token, then configures and removes the agent with that token using PAT-style `config.sh --auth PAT` arguments. The token is not a PAT even though the agent configuration mode is named PAT. Microsoft also documents a separate native [service-principal registration mode](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/service-principal-agent-registration?view=azure-devops), using `config.sh --auth SP` and client ID, tenant ID, and secret arguments. This image does not use that native mode.
+Select registration authentication with `AZP_AUTH`. It defaults to `pat`.
 
-At startup, the image uses Azure CLI in a temporary, private `AZURE_CONFIG_DIR` to acquire the Azure DevOps access token. It removes the CLI cache immediately afterward. The token is held only in the startup shell's unexported variable while needed for setup and cleanup. `AZP_CLIENTSECRET` is also unexported before child processes start and excluded from the agent's inherited environment.
+For PAT mode, set `AZP_AUTH=pat` and `AZP_TOKEN=<PAT>`. The PAT is used only for registration and removal. The token is passed to the agent configuration script through its supported `VSTS_AGENT_INPUT_TOKEN` environment input.
 
-An optional `AZP_TOKEN` PAT fallback is retained for local development and tests. The service principal is preferred whenever any `AZP_CLIENTID`, `AZP_CLIENTSECRET`, or `AZP_TENANTID` value is supplied; all three are then required, and the PAT is ignored. A PAT requires the Agent Pools read/manage permission. Do not use a PAT as the production default.
+For Managed Identity mode, set `AZP_AUTH=managedidentity` and `AZP_MANAGED_IDENTITY_CLIENT_ID=<CLIENT_ID>`. The Container Apps identity endpoint variables `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` must also be present. The image requests an Azure DevOps resource token directly from that endpoint at registration and obtains a fresh token again before removal. It does not use Azure CLI, a PAT, client secret, or certificate for this mode. Azure DevOps documents OAuth 2.0 tokens as valid values for the agent's `--token` input; the `pat` auth label is the agent's configuration interface, not a claim that the token is a PAT. See Microsoft's [agent configuration documentation](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/v2-windows), [Entra token guidance](https://learn.microsoft.com/en-us/azure/devops/cli/entra-tokens?view=azure-devops), and [Container Apps managed identity endpoint reference](https://learn.microsoft.com/en-us/azure/container-apps/managed-identity).
+
+The former service-principal environment variables (`AZP_CLIENTID`, `AZP_CLIENTSECRET`, `AZP_TENANTID`) remain supported when `AZP_AUTH` is omitted, for compatibility with existing deployments. Explicit `AZP_AUTH=pat` selects PAT mode.
 
 ### Azure resource access from pipeline jobs
 
@@ -53,15 +55,22 @@ Configure these environment variables for each job execution:
 | --- | --- | --- |
 | `AZP_URL` | Yes | Azure DevOps organization URL, such as `https://dev.azure.com/example` |
 | `AZP_POOL` | Yes | Target agent pool name |
-| `AZP_CLIENTID` | Yes for production | Entra service principal client/application ID |
-| `AZP_CLIENTSECRET` | Yes for production | Service principal secret; reference an Azure Container Apps secret and never embed it in the image |
-| `AZP_TENANTID` | Yes for production | Entra tenant ID |
+| `AZP_AUTH` | No | `pat` (default) or `managedidentity` |
+| `AZP_TOKEN` | PAT mode | Azure DevOps PAT with Agent Pools read/manage scope |
+| `AZP_MANAGED_IDENTITY_CLIENT_ID` | Managed Identity mode | User-Assigned Managed Identity client ID |
+| `IDENTITY_ENDPOINT` | Managed Identity mode | Supplied by Azure Container Apps |
+| `IDENTITY_HEADER` | Managed Identity mode | Supplied by Azure Container Apps; treated as a secret |
+| `AZP_CLIENTID` | Legacy service-principal mode | Existing service principal client ID |
+| `AZP_CLIENTSECRET` | Legacy service-principal mode | Existing service principal secret |
+| `AZP_TENANTID` | Legacy service-principal mode | Existing service principal tenant ID |
 | `AZP_AGENT_NAME` | No | Agent name; defaults to a unique name for each container execution |
 | `AZP_WORK` | No | Agent work directory; defaults to `/azp/_work` |
 
-Supply `AZP_CLIENTSECRET` using an Azure Container Apps secret reference. Configure the service principal in Azure DevOps with the required agent pool access before starting jobs. The image itself creates no Azure resources and includes no KEDA or Container Apps deployment configuration.
+Managed Identity prerequisites: create a User-Assigned Managed Identity, attach it to the Azure Container Apps Job, add the identity to the Azure DevOps organization, and grant Agent Pool Administrator permissions on the target pool for registration and removal. No PAT is required in this mode. `AZP_URL`, `AZP_POOL`, and optional `AZP_AGENT_NAME` are shared settings. The image itself creates no Azure resources.
 
-For local-only PAT fallback testing, provide `AZP_TOKEN` instead of the service principal variables.
+KEDA scaler authentication is separate from agent registration authentication. This change does not alter the scaler's existing identity configuration.
+
+For local-only PAT testing, set `AZP_AUTH=pat` and provide `AZP_TOKEN`.
 
 ## Local build
 
