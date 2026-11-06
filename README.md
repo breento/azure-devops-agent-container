@@ -31,7 +31,7 @@ docker buildx imagetools inspect ghcr.io/breento/azure-devops-agent:latest
 
 ## Authentication
 
-There are two separate authentication concerns.
+There are separate authentication concerns for registering an agent and for pipeline tasks.
 
 ### Azure DevOps agent registration and runtime
 
@@ -40,6 +40,8 @@ Select registration authentication with `AZP_AUTH`. It defaults to `pat`.
 For PAT mode, set `AZP_AUTH=pat` and `AZP_TOKEN=<PAT>`. The PAT is used only for registration and removal. The token is passed to the agent configuration script through its supported `VSTS_AGENT_INPUT_TOKEN` environment input.
 
 For Managed Identity mode, set `AZP_AUTH=managedidentity` and `AZP_MANAGED_IDENTITY_CLIENT_ID=<CLIENT_ID>`. The Container Apps identity endpoint variables `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` must also be present. The image requests an Azure DevOps resource token directly from that endpoint at registration and obtains a fresh token again before removal. It does not use Azure CLI, a PAT, client secret, or certificate for this mode. Azure DevOps documents OAuth 2.0 tokens as valid values for the agent's `--token` input; the `pat` auth label is the agent's configuration interface, not a claim that the token is a PAT. See Microsoft's [agent configuration documentation](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/v2-windows), [Entra token guidance](https://learn.microsoft.com/en-us/azure/devops/cli/entra-tokens?view=azure-devops), and [Container Apps managed identity endpoint reference](https://learn.microsoft.com/en-us/azure/container-apps/managed-identity).
+
+For a host that can acquire an Azure DevOps Entra token but must not expose its identity endpoint inside the container, `AZP_AUTH=hosttoken` reads exactly one token line from stdin. The token is used only by `config.sh configure`; this mode does not remove the registration from inside the container because the job may outlast the token. The host supervisor must reconcile and remove the reserved offline registration with a fresh token after the container exits. Do not put this token in an environment variable, Compose file, command argument, or pipeline variable. This mode is intended for an external trusted supervisor and is not used by Azure Container Apps Jobs.
 
 The former service-principal environment variables (`AZP_CLIENTID`, `AZP_CLIENTSECRET`, `AZP_TENANTID`) remain supported when `AZP_AUTH` is omitted, for compatibility with existing deployments. Explicit `AZP_AUTH=pat` selects PAT mode.
 
@@ -55,7 +57,7 @@ Configure these environment variables for each job execution:
 | --- | --- | --- |
 | `AZP_URL` | Yes | Azure DevOps organization URL, such as `https://dev.azure.com/example` |
 | `AZP_POOL` | Yes | Target agent pool name |
-| `AZP_AUTH` | No | `pat` (default) or `managedidentity` |
+| `AZP_AUTH` | No | `pat` (default), `managedidentity`, or `hosttoken` |
 | `AZP_TOKEN` | PAT mode | Azure DevOps PAT with Agent Pools read/manage scope |
 | `AZP_MANAGED_IDENTITY_CLIENT_ID` | Managed Identity mode | User-Assigned Managed Identity client ID |
 | `IDENTITY_ENDPOINT` | Managed Identity mode | Supplied by Azure Container Apps |

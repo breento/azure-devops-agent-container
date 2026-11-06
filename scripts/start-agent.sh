@@ -25,9 +25,26 @@ require_environment() {
 
     requested_auth="${AZP_AUTH:-}"
     case "$requested_auth" in
-        ""|pat|managedidentity) ;;
-        *) printf 'Unsupported AZP_AUTH value. Use pat or managedidentity.\n' >&2; exit 1 ;;
+        ""|pat|managedidentity|hosttoken) ;;
+        *) printf 'Unsupported AZP_AUTH value. Use pat, managedidentity, or hosttoken.\n' >&2; exit 1 ;;
     esac
+
+    if [[ "$requested_auth" == hosttoken ]]; then
+        auth_mode="hosttoken"
+        if ! IFS= read -r registration_token || [[ -z "$registration_token" ]]; then
+            printf 'Host-provided registration token is missing.\n' >&2
+            exit 1
+        fi
+        if [[ ! "$registration_token" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+            unset registration_token
+            printf 'Host-provided registration token is malformed.\n' >&2
+            exit 1
+        fi
+        # The one-time credential is read before any pipeline process starts.
+        exec </dev/null
+        unset AZP_TOKEN AZP_CLIENTSECRET AZP_CLIENTID AZP_TENANTID
+        return
+    fi
 
     if [[ "$requested_auth" == managedidentity ]]; then
         auth_mode="managedidentity"
@@ -104,7 +121,10 @@ get_managed_identity_token() {
 
 acquire_registration_token() {
     local token
-    if [[ "$auth_mode" == managedidentity ]]; then
+    if [[ "$auth_mode" == hosttoken ]]; then
+        token="$registration_token"
+        registration_token=''
+    elif [[ "$auth_mode" == managedidentity ]]; then
         if ! token="$(get_managed_identity_token)" || [[ -z "$token" ]]; then
             return 1
         fi
@@ -121,7 +141,11 @@ run_config_with_token() {
     local operation="$1"
     export VSTS_AGENT_INPUT_TOKEN="$registration_token"
     if [[ "$operation" == configure ]]; then
-        (cd "$agent_root" && ./config.sh --unattended --acceptTeeEula --url "$AZP_URL" --auth PAT --pool "$AZP_POOL" --agent "$AZP_AGENT_NAME" --work "$AZP_WORK" --replace)
+        if [[ "$auth_mode" == hosttoken ]]; then
+            (cd "$agent_root" && ./config.sh --unattended --acceptTeeEula --url "$AZP_URL" --auth PAT --pool "$AZP_POOL" --agent "$AZP_AGENT_NAME" --work "$AZP_WORK")
+        else
+            (cd "$agent_root" && ./config.sh --unattended --acceptTeeEula --url "$AZP_URL" --auth PAT --pool "$AZP_POOL" --agent "$AZP_AGENT_NAME" --work "$AZP_WORK" --replace)
+        fi
     else
         (cd "$agent_root" && timeout --signal=TERM --kill-after=1s 4s ./config.sh remove --unattended --auth PAT)
     fi
@@ -140,7 +164,9 @@ cleanup() {
         stop_agent_process_group TERM
     fi
 
-    if [[ "$agent_configured" == true && "$cleanup_started" == false && -x "$agent_root/config.sh" ]]; then
+    if [[ "$auth_mode" == hosttoken && "$agent_configured" == true ]]; then
+        printf 'Agent registration cleanup is delegated to the Oracle host supervisor.\n' >&2
+    elif [[ "$agent_configured" == true && "$cleanup_started" == false && -x "$agent_root/config.sh" ]]; then
         cleanup_started=true
         printf 'Removing Azure DevOps agent registration.\n' >&2
         if [[ "$auth_mode" == managedidentity ]]; then
@@ -236,7 +262,7 @@ AZP_URL="${AZP_URL%/}"
 AZP_AGENT_NAME="${AZP_AGENT_NAME:-aca-agent-$(hostname)-$(cat /proc/sys/kernel/random/uuid | cut -c1-8)}"
 AZP_WORK="${AZP_WORK:-/azp/_work}"
 export AZP_URL AZP_POOL AZP_AGENT_NAME AZP_WORK
-export VSO_AGENT_IGNORE="AZP_TOKEN,AZP_CLIENTSECRET"
+export VSO_AGENT_IGNORE="AZP_TOKEN,AZP_CLIENTSECRET,VSTS_AGENT_INPUT_TOKEN"
 
 if ! acquire_registration_token; then
     printf 'Unable to obtain an Azure DevOps registration token.\n' >&2
@@ -257,7 +283,7 @@ if ! run_config_with_token configure; then
     printf 'Azure DevOps agent registration failed.\n' >&2
     exit 1
 fi
-if [[ "$auth_mode" == managedidentity ]]; then unset registration_token; fi
+if [[ "$auth_mode" == managedidentity || "$auth_mode" == hosttoken ]]; then unset registration_token; fi
 printf 'Running one Azure DevOps pipeline job.\n'
 setsid ./run.sh --once &
 agent_pid=$!

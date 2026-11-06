@@ -10,7 +10,7 @@ SCRIPT = (ROOT / "scripts/start-agent.sh").read_text()
 
 
 class StartAgentTests(unittest.TestCase):
-    def run_agent(self, mode=None, token=None, identity=True, client_id=None, config_fails=False, run_fails=False):
+    def run_agent(self, mode=None, token=None, identity=True, client_id=None, config_fails=False, run_fails=False, stdin=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = pathlib.Path(temporary.name)
@@ -22,7 +22,7 @@ class StartAgentTests(unittest.TestCase):
             '#!/usr/bin/env bash\nprintf "%s:%s\\n" "$*" "${VSTS_AGENT_INPUT_TOKEN:-}" >> "$CALL_LOG"\n'
             + ('exit 9\n' if config_fails else 'exit 0\n')
         )
-        (agent / "run.sh").write_text('#!/usr/bin/env bash\n' + ('exit 8\n' if run_fails else 'exit 0\n'))
+        (agent / "run.sh").write_text('#!/usr/bin/env bash\nprintf "run-env:%s:%s\\n" "${VSTS_AGENT_INPUT_TOKEN:-}" "${AZP_TOKEN:-}" >> "$CALL_LOG"\nprintf "run-args:%s\\n" "$*" >> "$CALL_LOG"\n' + ('exit 8\n' if run_fails else 'exit 0\n'))
         (agent / "config.sh").chmod(0o755)
         (agent / "run.sh").chmod(0o755)
         counter = root / "identity-count"
@@ -58,7 +58,7 @@ class StartAgentTests(unittest.TestCase):
                         "AZP_MANAGED_IDENTITY_CLIENT_ID": client_id or "4ff6f360-6886-4bff-8ca2-d664e186bab5"})
         if config_fails:
             env["CONFIG_FAIL"] = "1"
-        result = subprocess.run([str(script_path)], env=env, text=True, capture_output=True, timeout=30)
+        result = subprocess.run([str(script_path)], env=env, input=stdin, text=True, capture_output=True, timeout=30)
         calls = (root / "calls").read_text() if (root / "calls").exists() else ""
         count = int(counter.read_text()) if counter.exists() else 0
         return result, calls, count
@@ -83,6 +83,34 @@ class StartAgentTests(unittest.TestCase):
         self.assertIn("remove", calls)
         self.assertIn("identity-token-2", calls)
         self.assertNotIn("header-secret", result.stdout + result.stderr)
+
+    def test_host_token_is_read_from_stdin_and_not_passed_to_job(self):
+        token = "header.payload.signature"
+        result, calls, count = self.run_agent(mode="hosttoken", stdin=token + "\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(count, 0)
+        configure = next(line for line in calls.splitlines() if "--acceptTeeEula" in line)
+        self.assertIn(token, configure)  # only the config interface receives it via environment
+        self.assertNotIn("--replace", configure)
+        self.assertIn("Agent registration cleanup is delegated", result.stderr)
+        run_env = next(line for line in calls.splitlines() if line.startswith("run-env:"))
+        self.assertEqual(run_env, "run-env::")
+        self.assertEqual(calls.count("run-args:--once"), 1)
+        self.assertNotIn(token, result.stdout + result.stderr)
+
+    def test_host_token_missing_or_malformed_fails_closed(self):
+        for supplied in (None, "not-a-jwt\n"):
+            with self.subTest(supplied=supplied):
+                result, calls, _ = self.run_agent(mode="hosttoken", stdin=supplied)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls, "")
+                self.assertNotIn("not-a-jwt", result.stderr)
+
+    def test_host_token_registration_failure_never_runs_job_or_local_remove(self):
+        result, calls, _ = self.run_agent(mode="hosttoken", stdin="a.b.c\n", config_fails=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Running one Azure DevOps pipeline job", result.stdout)
+        self.assertNotIn(" remove ", calls)
 
     def test_missing_identity_configuration_fails_without_pat_fallback(self):
         result, _, count = self.run_agent(mode="managedidentity", token="should-not-be-used", identity=False)
