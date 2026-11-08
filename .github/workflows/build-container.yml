@@ -40,6 +40,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Run image and startup regression tests
+        run: |
+          python3 -m unittest discover -s tests -v
+          bash -n scripts/start-agent.sh
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

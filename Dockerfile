@@ -16,12 +16,12 @@ LABEL org.opencontainers.image.title="Azure DevOps ephemeral agent" \
       org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV AGENT_ALLOW_RUNASROOT=1
 ENV AZP_WORK=/azp/_work
 ENV AZP_AGENT_VERSION=${AZP_AGENT_VERSION}
 ENV TARGETARCH=${TARGETARCH}
 ENV POWERSHELL_TELEMETRY_OPTOUT=1
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+ENV AZURE_EXTENSION_SYS_DIR=/opt/azure-cli-extensions
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -89,8 +89,9 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends azure-cli; \
     az version; \
-    az extension add --name azure-devops --yes; \
-    az extension add --name containerapp --yes --allow-preview true; \
+    install -d -m 0755 "$AZURE_EXTENSION_SYS_DIR"; \
+    az extension add --name azure-devops --yes --system; \
+    az extension add --name containerapp --yes --allow-preview true --system; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -115,6 +116,8 @@ RUN set -eux; \
     packer version
 
 RUN set -eux; \
+    groupadd --gid 1003 azp; \
+    useradd --uid 1001 --gid 1003 --create-home --home-dir /home/azp --shell /bin/bash azp; \
     case "$TARGETARCH" in \
         amd64) agent_arch=x64; agent_sha256=6e3352e1dc44c924cd85840df279f21c200e6365596a7c38f3087015262555dc ;; \
         arm64) agent_arch=arm64; agent_sha256=d97cb1286de41c97347a5da4f663daed70f65f9cdd4322f50f8cc7b4e2df9dd4 ;; \
@@ -130,6 +133,13 @@ RUN set -eux; \
     rm -f "/tmp/${agent_archive}"; \
     /azp/agent/bin/installdependencies.sh; \
     chmod +x /azp/agent/config.sh /azp/agent/run.sh; \
+    install -d -o 1001 -g 1003 -m 0750 /azp/agent/_diag /azp/_work; \
+    install -d -o 1001 -g 1003 -m 0700 \
+        /home/azp/.azure \
+        /home/azp/.cache \
+        /home/azp/.config \
+        /home/azp/.terraform.d; \
+    chown -R 1001:1003 /azp/agent; \
     installed_agent_version="$(/azp/agent/bin/Agent.Listener --version)"; \
     test "$installed_agent_version" = "$AZP_AGENT_VERSION"
 
@@ -139,9 +149,29 @@ RUN set -eux; \
 
 WORKDIR /azp
 COPY scripts/start-agent.sh scripts/verify-tools.ps1 /azp/
+RUN chmod 0755 /azp/start-agent.sh
+
+ENV HOME=/home/azp
+USER 1001:1003
 
 RUN set -eux; \
-    chmod +x /azp/start-agent.sh; \
+    test "$(id -u)" = 1001; \
+    test "$(id -g)" = 1003; \
+    test "$HOME" = /home/azp; \
+    for path in /azp/agent /azp/agent/_diag /azp/_work "$HOME" "$HOME/.azure" "$HOME/.cache" "$HOME/.config" "$HOME/.terraform.d"; do \
+        test -d "$path"; \
+        test -w "$path"; \
+    done; \
+    test ! -w /root; \
+    printf 'workspace write test\n' > /azp/_work/.write-test; \
+    mkdir /azp/_work/.directory-write-test; \
+    printf 'created\n' > /azp/_work/.directory-write-test/job-file; \
+    printf 'modified\n' >> /azp/_work/.directory-write-test/job-file; \
+    rm /azp/_work/.directory-write-test/job-file; \
+    rmdir /azp/_work/.directory-write-test; \
+    printf 'agent config write test\n' > /azp/agent/.write-test; \
+    printf 'agent diag write test\n' > /azp/agent/_diag/.write-test; \
+    rm -rf /azp/_work/.write-test /azp/_work/.directory-write-test /azp/agent/.write-test /azp/agent/_diag/.write-test; \
     pwsh -NoLogo -NoProfile -File /azp/verify-tools.ps1
 
 ENTRYPOINT ["/azp/start-agent.sh"]

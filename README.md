@@ -16,6 +16,12 @@ This multi-architecture Linux image runs a temporary Azure DevOps self-hosted ag
 
 PowerShell, Terraform, Packer, and Azure Pipelines agent versions are pinned in the Dockerfile and build workflow. The agent is installed during image build at version **5.279.0**, using Microsoft's architecture-specific packages. This makes startup faster and deterministic because the agent is no longer downloaded at container startup. Updating the agent requires changing the explicit `AZP_AGENT_VERSION` pin and rebuilding/publishing the image. Monthly rebuilds refresh the OS and upstream packages without silently changing this pin. Azure CLI comes from Microsoft's Ubuntu repository; the `azure-devops` and `containerapp` extensions are installed explicitly, including preview support for `containerapp`. Tool verification runs during image build on both architectures.
 
+## Container user and writable paths
+
+The image runs as fixed UID `1001`, GID `1003` (`azp`) with `HOME=/home/azp`; it does not enable `AGENT_ALLOW_RUNASROOT`. The agent installation and `_diag` directory, default `/azp/_work`, and home-based runtime state directories are prepared and owned by this user at build time. A build-time smoke check, itself run as UID 1001:GID 1003, creates, modifies, and removes workspace files and checks agent, diagnostics, home, Azure CLI, Terraform, and configuration paths. The Azure CLI extensions are installed in a read-only system extension directory so they remain available after the process changes from build-time root to the runtime user. No runtime `chown`, Linux capability, host volume, privileged mode, or Docker socket is needed.
+
+`AZP_WORK` may still override `/azp/_work`; a custom path must already be writable by UID 1001:GID 1003. Azure CLI login caches, PowerShell user state, Terraform plugin state, and Packer user configuration are stored under the ephemeral container home. They disappear with the container.
+
 ## Image location and tags
 
 GitHub Actions publishes a single multi-platform image index at `ghcr.io/<owner>/azure-devops-agent`. Main branch builds publish `latest`, a date/run-number tag, and a commit-based `sha-<commit>` convenience tag. Each tag resolves to both `linux/amd64` and `linux/arm64`, and Docker chooses the matching platform. The SHA tag can be republished by the monthly rebuild, so it does not guarantee an immutable image. Pull requests build both architectures without pushing. A monthly scheduled build refreshes Ubuntu security updates and upstream packages.
@@ -98,10 +104,10 @@ docker run --rm \
 
 ## One-job lifecycle
 
-1. The container starts and gets an Azure DevOps registration token. The pinned agent package is already installed in the image, so startup does not download it.
-2. The preinstalled agent is registered under a unique name.
+1. The non-root container starts and gets an Azure DevOps registration token. The pinned agent package is already installed in the image, so startup does not download it.
+2. The preinstalled agent is registered for one job. The Oracle hosttoken supervisor uses `config.sh --replace` for its stable pool registration and checks the expected ID before starting; PAT and Managed Identity modes retain their existing registration behavior.
 3. `run.sh --once` accepts exactly one pipeline job, then exits.
-4. The registration is removed, including when the container receives `SIGTERM` or `SIGINT`.
+4. The hosttoken registration is retained for the next Oracle container. PAT and Managed Identity routes remove their registration, including when the container receives `SIGTERM` or `SIGINT`.
 5. The container exits with the agent process status; startup and job failures return non-zero.
 
 ## Limitations

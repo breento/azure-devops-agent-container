@@ -19,7 +19,8 @@ class StartAgentTests(unittest.TestCase):
         agent.mkdir()
         bin_dir.mkdir()
         (agent / "config.sh").write_text(
-            '#!/usr/bin/env bash\nprintf "%s:%s\\n" "$*" "${VSTS_AGENT_INPUT_TOKEN:-}" >> "$CALL_LOG"\n'
+            '#!/usr/bin/env bash\nprintf "config-user:%s:%s\\n" "$(id -u)" "$(id -g)" >> "$CALL_LOG"\n'
+            'printf "%s:%s\\n" "$*" "${VSTS_AGENT_INPUT_TOKEN:-}" >> "$CALL_LOG"\n'
             + f'printf \'{{"agentId":{actual_agent_id}}}\\n\' > .agent\n'
             + ('exit 9\n' if config_fails else 'exit 0\n')
         )
@@ -100,6 +101,15 @@ class StartAgentTests(unittest.TestCase):
         self.assertEqual(run_env, "run-env:::")
         self.assertEqual(calls.count("run-args:--once"), 1)
         self.assertNotIn(token, result.stdout + result.stderr)
+
+    @unittest.skipIf(os.geteuid() == 0, "run this assertion under an unprivileged test account")
+    def test_registration_and_job_commands_run_as_nonroot(self):
+        result, calls, _ = self.run_agent(mode="hosttoken", stdin="a.b.c\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config_user = next(line for line in calls.splitlines() if line.startswith("config-user:"))
+        uid, gid = (int(value) for value in config_user.removeprefix("config-user:").split(":"))
+        self.assertNotEqual(uid, 0)
+        self.assertNotEqual(gid, 0)
 
     def test_hosttoken_replacement_requires_same_agent_id_before_job(self):
         result, calls, _ = self.run_agent(mode="hosttoken", stdin="a.b.c\n", expected_agent_id=314, actual_agent_id=314)
