@@ -49,10 +49,17 @@ foreach ($module in $requiredModules) {
 }
 
 Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
-Write-Host "Azure CLI: $((az version --output json | ConvertFrom-Json).'azure-cli')"
+$azureCliVersion = (az version --output json | ConvertFrom-Json).'azure-cli'
+$terraformVersion = (terraform version -json | ConvertFrom-Json).terraform_version
+$packerVersion = (packer version).Trim() -replace '^Packer v', ''
+if ($PSVersionTable.PSVersion.ToString() -ne $env:POWERSHELL_VERSION) { throw 'Unexpected PowerShell version.' }
+if ($azureCliVersion -ne $env:AZURE_CLI_VERSION) { throw "Unexpected Azure CLI version '$azureCliVersion'." }
+if ($terraformVersion -ne $env:TERRAFORM_VERSION) { throw "Unexpected Terraform version '$terraformVersion'." }
+if ($packerVersion -ne $env:PACKER_VERSION) { throw "Unexpected Packer version '$packerVersion'." }
+Write-Host "Azure CLI: $azureCliVersion"
 Write-Host 'Azure CLI extensions: azure-devops, containerapp'
-Write-Host "Terraform: $((terraform version -json | ConvertFrom-Json).terraform_version)"
-Write-Host "Packer: $((packer version).Trim())"
+Write-Host "Terraform: $terraformVersion"
+Write-Host "Packer: $packerVersion"
 $agentListener = '/azp/agent/bin/Agent.Listener'
 if (-not (Test-Path -LiteralPath $agentListener -PathType Leaf)) {
     throw "Azure DevOps agent listener was not found at '$agentListener'."

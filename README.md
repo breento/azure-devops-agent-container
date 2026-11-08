@@ -9,12 +9,12 @@ This multi-architecture Linux image runs a temporary Azure DevOps self-hosted ag
 - Ubuntu 24.04
 - Azure Pipelines agent 5.279.0, installed at image build time
 - PowerShell 7.6.6, installed with architecture-specific SHA256 verification (amd64 `.deb`; arm64 release tarball with Ubuntu 24.04 `libicu74`)
-- Azure CLI with the `azure-devops` and `containerapp` extensions
-- Terraform 1.16.5 and Packer 1.16.1
+- Azure CLI 2.92.0 with the `azure-devops` and `containerapp` extensions
+- Terraform 1.17.1 and Packer 1.16.2
 - Git, curl, jq, unzip, zip, OpenSSH client, rsync, and CA certificates
 - PowerShell modules: `Az.Accounts`, `Az.Resources`, `Az.Storage`, `Az.Compute`, `Az.Network`, `Az.ManagedServiceIdentity`, and `Az.DesktopVirtualization`
 
-PowerShell, Terraform, Packer, and Azure Pipelines agent versions are pinned in the Dockerfile and build workflow. The agent is installed during image build at version **5.279.0**, using Microsoft's architecture-specific packages. This makes startup faster and deterministic because the agent is no longer downloaded at container startup. Updating the agent requires changing the explicit `AZP_AGENT_VERSION` pin and rebuilding/publishing the image. Monthly rebuilds refresh the OS and upstream packages without silently changing this pin. Azure CLI comes from Microsoft's Ubuntu repository; the `azure-devops` and `containerapp` extensions are installed explicitly, including preview support for `containerapp`. Tool verification runs during image build on both architectures.
+PowerShell, Azure CLI, Terraform, Packer, and Azure Pipelines agent versions are pinned in the Dockerfile and build workflow. The agent is installed during image build at version **5.279.0**, using Microsoft's architecture-specific packages. This makes startup faster and deterministic because the agent is no longer downloaded at container startup. Updating the agent requires changing the explicit `AZP_AGENT_VERSION` pin and rebuilding/publishing the image. Azure CLI is installed from Microsoft's Ubuntu repository at the pinned version; the `azure-devops` and `containerapp` extensions are installed explicitly, including preview support for `containerapp`. Tool verification runs during image build on both architectures.
 
 ## Container user and writable paths
 
@@ -24,7 +24,7 @@ The image runs as fixed UID `1001`, GID `1003` (`azp`) with `HOME=/home/azp`; it
 
 ## Image location and tags
 
-GitHub Actions publishes a single multi-platform image index at `ghcr.io/<owner>/azure-devops-agent`. Main branch builds publish `latest`, a date/run-number tag, and a commit-based `sha-<commit>` convenience tag. Each tag resolves to both `linux/amd64` and `linux/arm64`, and Docker chooses the matching platform. The SHA tag can be republished by the monthly rebuild, so it does not guarantee an immutable image. Pull requests build both architectures without pushing. A monthly scheduled build refreshes Ubuntu security updates and upstream packages.
+GitHub Actions runs the regression tests and syntax checks for pushes to `main`, pull requests targeting `main`, and manual dispatches. Pull requests also build and validate both architectures without publishing. After successful tests, pushes to `main` and manual runs on `main` publish a multi-platform image index at `ghcr.io/breento/azure-devops-agent`. The tags are `sha-<7-character-commit-sha>` and `latest`. Concurrent runs for the same branch are serialized. Each tag resolves to both `linux/amd64` and `linux/arm64`, and Docker chooses the matching platform. A SHA tag identifies source but is not an immutable image reference; pin deployments by OCI index digest.
 
 For Azure Container Apps deployments, pin the image by digest for true immutability. The `sha-<commit>` tag is useful for identifying source but can move when that commit is rebuilt. Use `latest` for convenience in development only.
 
@@ -34,6 +34,10 @@ Pull the published image and inspect its platform manifests:
 docker pull ghcr.io/breento/azure-devops-agent:latest
 docker buildx imagetools inspect ghcr.io/breento/azure-devops-agent:latest
 ```
+
+The `Digest` printed by `imagetools inspect` is the OCI index digest. For an exact reference use `ghcr.io/breento/azure-devops-agent@sha256:<digest>`. The workflow also checks the published index contains both required Linux architectures and records the digest in its run summary.
+
+To roll a new image into `DockerInfrastructure`, first wait for the `main` workflow to pass and publish both architectures. Copy the reported OCI index digest into the existing image reference there, review that infrastructure diff, then deploy through the normal infrastructure release process. Keep the existing Oracle image running until that image has been built and validated successfully.
 
 ## Authentication
 
@@ -85,8 +89,9 @@ For local-only PAT testing, set `AZP_AUTH=pat` and provide `AZP_TOKEN`.
 ```bash
 docker build \
   --build-arg POWERSHELL_VERSION=7.6.6 \
-  --build-arg TERRAFORM_VERSION=1.16.5 \
-  --build-arg PACKER_VERSION=1.16.1 \
+  --build-arg TERRAFORM_VERSION=1.17.1 \
+  --build-arg PACKER_VERSION=1.16.2 \
+  --build-arg AZURE_CLI_VERSION=2.92.0 \
   --build-arg AZP_AGENT_VERSION=5.279.0 \
   -t azure-devops-agent:local .
 ```

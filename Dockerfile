@@ -5,8 +5,9 @@ ARG TARGETPLATFORM
 ARG POWERSHELL_VERSION=7.6.6
 ARG POWERSHELL_SHA256_AMD64=9585F38AB5A026C3FC0995486E26E12050777960FEF47A22DCA98B577C5D27A7
 ARG POWERSHELL_TARBALL_SHA256_ARM64=924829e54c983648f6f1419a2dc7f9433c861b2fb5bd57736ff096c24f133729
-ARG TERRAFORM_VERSION=1.16.5
-ARG PACKER_VERSION=1.16.1
+ARG TERRAFORM_VERSION=1.17.1
+ARG PACKER_VERSION=1.16.2
+ARG AZURE_CLI_VERSION=2.92.0
 ARG AZP_AGENT_VERSION=5.279.0
 ARG IMAGE_SOURCE=https://github.com
 
@@ -18,6 +19,10 @@ LABEL org.opencontainers.image.title="Azure DevOps ephemeral agent" \
 ENV DEBIAN_FRONTEND=noninteractive
 ENV AZP_WORK=/azp/_work
 ENV AZP_AGENT_VERSION=${AZP_AGENT_VERSION}
+ENV POWERSHELL_VERSION=${POWERSHELL_VERSION}
+ENV TERRAFORM_VERSION=${TERRAFORM_VERSION}
+ENV PACKER_VERSION=${PACKER_VERSION}
+ENV AZURE_CLI_VERSION=${AZURE_CLI_VERSION}
 ENV TARGETARCH=${TARGETARCH}
 ENV POWERSHELL_TELEMETRY_OPTOUT=1
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
@@ -87,8 +92,9 @@ RUN set -eux; \
         'Signed-by: /etc/apt/keyrings/microsoft.gpg' \
         > /etc/apt/sources.list.d/azure-cli.sources; \
     apt-get update; \
-    apt-get install -y --no-install-recommends azure-cli; \
+    apt-get install -y --no-install-recommends "azure-cli=${AZURE_CLI_VERSION}-1~${AZ_DIST}"; \
     az version; \
+    test "$(az version --output json | jq -r '."azure-cli"')" = "$AZURE_CLI_VERSION"; \
     install -d -m 0755 "$AZURE_EXTENSION_SYS_DIR"; \
     az extension add --name azure-devops --yes --system; \
     az extension add --name containerapp --yes --allow-preview true --system; \
@@ -112,8 +118,8 @@ RUN set -eux; \
         install -m 0755 "${temp_dir}/${tool}" "/usr/local/bin/${tool}"; \
         rm -rf "$temp_dir" "$archive" "$checksums"; \
     done; \
-    terraform version; \
-    packer version
+    test "$(terraform version -json | jq -r .terraform_version)" = "$TERRAFORM_VERSION"; \
+    test "$(packer version | sed -E 's/^Packer v//')" = "$PACKER_VERSION"
 
 RUN set -eux; \
     groupadd --gid 1003 azp; \
