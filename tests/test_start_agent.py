@@ -10,7 +10,7 @@ SCRIPT = (ROOT / "scripts/start-agent.sh").read_text()
 
 
 class StartAgentTests(unittest.TestCase):
-    def run_agent(self, mode=None, token=None, identity=True, client_id=None, config_fails=False, run_fails=False, stdin=None):
+    def run_agent(self, mode=None, token=None, identity=True, client_id=None, config_fails=False, run_fails=False, stdin=None, expected_agent_id=None, actual_agent_id=314):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = pathlib.Path(temporary.name)
@@ -20,9 +20,10 @@ class StartAgentTests(unittest.TestCase):
         bin_dir.mkdir()
         (agent / "config.sh").write_text(
             '#!/usr/bin/env bash\nprintf "%s:%s\\n" "$*" "${VSTS_AGENT_INPUT_TOKEN:-}" >> "$CALL_LOG"\n'
+            + f'printf \'{{"agentId":{actual_agent_id}}}\\n\' > .agent\n'
             + ('exit 9\n' if config_fails else 'exit 0\n')
         )
-        (agent / "run.sh").write_text('#!/usr/bin/env bash\nprintf "run-env:%s:%s\\n" "${VSTS_AGENT_INPUT_TOKEN:-}" "${AZP_TOKEN:-}" >> "$CALL_LOG"\nprintf "run-args:%s\\n" "$*" >> "$CALL_LOG"\n' + ('exit 8\n' if run_fails else 'exit 0\n'))
+        (agent / "run.sh").write_text('#!/usr/bin/env bash\nprintf "run-env:%s:%s:%s\\n" "${VSTS_AGENT_INPUT_TOKEN:-}" "${AZP_TOKEN:-}" "${AZP_EXPECTED_AGENT_ID:-}" >> "$CALL_LOG"\nprintf "run-args:%s\\n" "$*" >> "$CALL_LOG"\n' + ('exit 8\n' if run_fails else 'exit 0\n'))
         (agent / "config.sh").chmod(0o755)
         (agent / "run.sh").chmod(0o755)
         counter = root / "identity-count"
@@ -53,6 +54,8 @@ class StartAgentTests(unittest.TestCase):
             env["AZP_AUTH"] = mode
         if token:
             env["AZP_TOKEN"] = token
+        if expected_agent_id is not None:
+            env["AZP_EXPECTED_AGENT_ID"] = str(expected_agent_id)
         if identity:
             env.update({"IDENTITY_ENDPOINT": "http://identity.invalid/token", "IDENTITY_HEADER": "header-secret",
                         "AZP_MANAGED_IDENTITY_CLIENT_ID": client_id or "4ff6f360-6886-4bff-8ca2-d664e186bab5"})
@@ -91,12 +94,28 @@ class StartAgentTests(unittest.TestCase):
         self.assertEqual(count, 0)
         configure = next(line for line in calls.splitlines() if "--acceptTeeEula" in line)
         self.assertIn(token, configure)  # only the config interface receives it via environment
-        self.assertNotIn("--replace", configure)
-        self.assertIn("Agent registration cleanup is delegated", result.stderr)
+        self.assertIn("--replace", configure)
+        self.assertIn("Stable agent registration is retained", result.stderr)
         run_env = next(line for line in calls.splitlines() if line.startswith("run-env:"))
-        self.assertEqual(run_env, "run-env::")
+        self.assertEqual(run_env, "run-env:::")
         self.assertEqual(calls.count("run-args:--once"), 1)
         self.assertNotIn(token, result.stdout + result.stderr)
+
+    def test_hosttoken_replacement_requires_same_agent_id_before_job(self):
+        result, calls, _ = self.run_agent(mode="hosttoken", stdin="a.b.c\n", expected_agent_id=314, actual_agent_id=314)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.count("run-args:--once"), 1)
+
+        result, calls, _ = self.run_agent(mode="hosttoken", stdin="a.b.c\n", expected_agent_id=314, actual_agent_id=315)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Running one Azure DevOps pipeline job", result.stderr)
+        self.assertNotIn("run-args:--once", calls)
+        self.assertIn("agent ID changed", result.stderr)
+
+    def test_hosttoken_first_registration_does_not_require_previous_id(self):
+        result, calls, _ = self.run_agent(mode="hosttoken", stdin="a.b.c\n", actual_agent_id=315)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.count("run-args:--once"), 1)
 
     def test_host_token_missing_or_malformed_fails_closed(self):
         for supplied in (None, "not-a-jwt\n"):

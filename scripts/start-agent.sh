@@ -31,6 +31,10 @@ require_environment() {
 
     if [[ "$requested_auth" == hosttoken ]]; then
         auth_mode="hosttoken"
+        if [[ -n "${AZP_EXPECTED_AGENT_ID:-}" && ! "${AZP_EXPECTED_AGENT_ID}" =~ ^[1-9][0-9]*$ ]]; then
+            printf 'AZP_EXPECTED_AGENT_ID must be a positive integer.\n' >&2
+            exit 1
+        fi
         if ! IFS= read -r registration_token || [[ -z "$registration_token" ]]; then
             printf 'Host-provided registration token is missing.\n' >&2
             exit 1
@@ -142,7 +146,7 @@ run_config_with_token() {
     export VSTS_AGENT_INPUT_TOKEN="$registration_token"
     if [[ "$operation" == configure ]]; then
         if [[ "$auth_mode" == hosttoken ]]; then
-            (cd "$agent_root" && ./config.sh --unattended --acceptTeeEula --url "$AZP_URL" --auth PAT --pool "$AZP_POOL" --agent "$AZP_AGENT_NAME" --work "$AZP_WORK")
+            (cd "$agent_root" && ./config.sh --unattended --acceptTeeEula --url "$AZP_URL" --auth PAT --pool "$AZP_POOL" --agent "$AZP_AGENT_NAME" --work "$AZP_WORK" --replace)
         else
             (cd "$agent_root" && ./config.sh --unattended --acceptTeeEula --url "$AZP_URL" --auth PAT --pool "$AZP_POOL" --agent "$AZP_AGENT_NAME" --work "$AZP_WORK" --replace)
         fi
@@ -165,7 +169,7 @@ cleanup() {
     fi
 
     if [[ "$auth_mode" == hosttoken && "$agent_configured" == true ]]; then
-        printf 'Agent registration cleanup is delegated to the Oracle host supervisor.\n' >&2
+        printf 'Stable agent registration is retained for the next one-job container.\n' >&2
     elif [[ "$agent_configured" == true && "$cleanup_started" == false && -x "$agent_root/config.sh" ]]; then
         cleanup_started=true
         printf 'Removing Azure DevOps agent registration.\n' >&2
@@ -262,7 +266,7 @@ AZP_URL="${AZP_URL%/}"
 AZP_AGENT_NAME="${AZP_AGENT_NAME:-aca-agent-$(hostname)-$(cat /proc/sys/kernel/random/uuid | cut -c1-8)}"
 AZP_WORK="${AZP_WORK:-/azp/_work}"
 export AZP_URL AZP_POOL AZP_AGENT_NAME AZP_WORK
-export VSO_AGENT_IGNORE="AZP_TOKEN,AZP_CLIENTSECRET,VSTS_AGENT_INPUT_TOKEN"
+export VSO_AGENT_IGNORE="AZP_TOKEN,AZP_CLIENTSECRET,VSTS_AGENT_INPUT_TOKEN,AZP_EXPECTED_AGENT_ID"
 
 if ! acquire_registration_token; then
     printf 'Unable to obtain an Azure DevOps registration token.\n' >&2
@@ -283,6 +287,15 @@ if ! run_config_with_token configure; then
     printf 'Azure DevOps agent registration failed.\n' >&2
     exit 1
 fi
+if [[ "$auth_mode" == hosttoken && -n "${AZP_EXPECTED_AGENT_ID:-}" ]]; then
+    actual_agent_id="$(jq -er '.agentId | select(type == "number" and . > 0)' "$agent_root/.agent" 2>/dev/null || true)"
+    if [[ ! "$actual_agent_id" =~ ^[1-9][0-9]*$ || "$actual_agent_id" != "$AZP_EXPECTED_AGENT_ID" ]]; then
+        printf 'ERROR: Azure DevOps agent ID changed during replacement; refusing to start a job.\n' >&2
+        exit 1
+    fi
+    unset actual_agent_id
+fi
+unset AZP_EXPECTED_AGENT_ID
 if [[ "$auth_mode" == managedidentity || "$auth_mode" == hosttoken ]]; then unset registration_token; fi
 printf 'Running one Azure DevOps pipeline job.\n'
 setsid ./run.sh --once &
